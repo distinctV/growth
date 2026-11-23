@@ -577,7 +577,7 @@ void test_stat_label() {
     TEST_ASSERT(strcmp(stat_label(STAT_SKL), "LK") == 0, "stat_label(SKL) = 'LK'");
     TEST_ASSERT(strcmp(stat_label(STAT_SPD), "SD") == 0, "stat_label(SPD) = 'SD'");
     TEST_ASSERT(strcmp(stat_label(STAT_DEF), "DF") == 0, "stat_label(DEF) = 'DF'");
-    TEST_ASSERT(strcmp(stat_label(STAT_RES), "--") == 0, "stat_label(RES) = 'RS'");
+    TEST_ASSERT(strcmp(stat_label(STAT_RES), "RS") == 0, "stat_label(RES) = 'RS'");
 }
 
 void test_format_stat_display_line() {
