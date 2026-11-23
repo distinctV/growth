@@ -468,7 +468,7 @@ const char* stat_label(StatType s) {
         case STAT_SKL: return "LK";
         case STAT_SPD: return "SD";
         case STAT_DEF: return "DF";
-        case STAT_RES: return "--";  // Reserved/unused stat
+        case STAT_RES: return "RS"; 
         case STAT_LCK: return "LK";
         default:       return "?";
     }
