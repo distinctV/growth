@@ -14,13 +14,99 @@
 #include <stdio.h>
 #include <math.h>
 
-// --- Constants for RNG Analysis ---
-static const float BLESSED_SIGMA_THRESHOLD = 1.0f;   // Blessed if > 1 sigma above mean
-static const float CURSED_SIGMA_THRESHOLD = -1.0f;   // Cursed if < 1 sigma below mean
+// ============================================================================
+// Blood Type Slot Mapping (replaces verbose switch statements)
+// ============================================================================
+const BloodType BLOOD_TYPE_MAP[13] = {
+    BLOOD_BALDO, BLOOD_ODO, BLOOD_HEZUL, BLOOD_NOBA, BLOOD_DAIN,
+    BLOOD_NEIR, BLOOD_ULIR, BLOOD_BLAGI, BLOOD_FALA, BLOOD_TORDO,
+    BLOOD_HOLSETY, BLOOD_NARGA, BLOOD_LOPUTOUSU
+};
+
+/* Stat label lookup table */
+const char* STAT_LABELS[STAT_COUNT] = {"HP", "STR", "MAG", "SKL", "SPD", "DEF", "RES", "LCK"};
+
+/* Impact string lookup (replaces switch in format_stat_display_line) */
+static const char* IMPACT_STR_MAP[] = { "[C]", "[N]", "[B]" };
+
+// ============================================================================
+// Constant Definitions (extern declarations from header)
+// ============================================================================
+const uint32_t CLASS_TABLE_OFFSET    = 0x10000;
+const int      CLASS_RECORD_SIZE     = 31;
+const int      UNIT_RECORD_GROWTH_OFFSET = 20;
+const int      UNIT_RECORD_MAX_SIZE    = 8;
+const int      UNIT_CLASS_ID_OFFSET  = 9;
+const int      UNIT_LEVEL_OFFSET     = 10;
+const int      UNIT_BLOOD_OFFSET     = 31;
+const int TYPE1_CLASS_OFFSET   = 5;
+const int TYPE1_LEVEL_OFFSET   = 7;
+const int TYPE1_GENDER_OFFSET  = 8;
+const int TYPE1_HEIR_OFFSET    = 11;
+const int PARENT_SAME_GENDER_OFFSET = 20;
+const int PARENT_SECONDARY_OFFSET   = 24;
+const int TYPE3_CLASS_OFFSET = 5;
+const int TYPE3_LEVEL_OFFSET = 7;
+const int CLASS_HP_BASE_OFFSET    = 1;
+const int CLASS_STAT_BASE_OFFSET  = 2;
+const uint8_t RAM_BANK_LOW  = 0x7E;
+const uint8_t RAM_BANK_HIGH = 0x7F;
+const uint32_t UNIT_HANDLE_MIN = 0x2000;
+const uint32_t UNIT_HANDLE_MAX = 0xFFE0;
+const uint8_t CLASS_ID_MASK = 0x3F;
+const uint8_t UNIT_TYPE_PLAYABLE   = 0;
+const uint8_t UNIT_TYPE_CHILD      = 1;
+const uint8_t UNIT_TYPE_NPC_BOSS   = 2;
+const uint8_t UNIT_TYPE_CLASS_BASED = 3;
+const char* IMPACT_BLESSED_STR = "[B]";
+const char* IMPACT_CURSED_STR  = "[C]";
+const char* IMPACT_NEUTRAL_STR  = "[N]";
+const float BLESSED_SIGMA_THRESHOLD = 1.0f;
+const float CURSED_SIGMA_THRESHOLD = -1.0f;
+
+
+// ============================================================================
+// Blood Slot Decoding Helper (extracted from 3 duplicated functions)
+// ============================================================================
+
+/**
+ * @brief Decodes a single blood slot value from the 3-byte holy blood field.
+ *
+ * The 13 slots (2 bits each) are stored LSB-first across 3 bytes:
+ *   byte0: slots 0-3, byte1: slots 4-7, byte2: slots 8-9
+ */
+static inline uint8_t decode_blood_slot(const uint8_t* blood_ptr, int slot_index) {
+    int bit_offset = slot_index * 2;
+    if (bit_offset < 8)
+        return (blood_ptr[0] >> bit_offset) & 0x03;
+    if (bit_offset < 16)
+        return (blood_ptr[1] >> (bit_offset - 8)) & 0x03;
+    return (blood_ptr[2] >> (bit_offset - 16)) & 0x03;
+}
+
+/* Class growth offset per stat index (stat 0=HP at +8, others at +9..+13, LCK at +15) */
+const int CLASS_GROWTH_OFFSET[STAT_COUNT] = {8, 9, 10, 11, 12, 13, 14, 15};
+
+/* Unit record growth offset per stat index (stat 0=HP at +20, others at +20+stat) */
+const int UNIT_GROWTH_OFFSET[STAT_COUNT] = {20, 21, 22, 23, 24, 25, 26, 27};
 
 // ============================================================================
 // Layer 1: Memory Access (The "Drivers")
 // ============================================================================
+
+/**
+ * @brief Reads an unsigned 8-bit value from raw memory at offset a.
+ */
+uint8 read_u8(const uint8_t* r, uint32_t a) {
+    return r[a];
+}
+
+/**
+ * @brief Reads an unsigned 16-bit little-endian value from raw memory at offset a.
+ */
+uint16 read_u16(const uint8_t* r, uint32_t a) {
+    return (uint16)r[a] | ((uint16)r[a + 1] << 8);
+}
 
 /**
  * @brief Resolves a 24-bit pointer from SNES RAM (banks $7E and $7F).
@@ -30,9 +116,9 @@ static const float CURSED_SIGMA_THRESHOLD = -1.0f;   // Cursed if < 1 sigma belo
  */
 uint32_t resolve_ram_ptr(const uint8_t* r, uint32_t a) {
     uint8_t bank = r[a + 2];
-    if (bank != 0x7E && bank != 0x7F) return 0;
+    if (bank != RAM_BANK_LOW && bank != RAM_BANK_HIGH) return 0;
     uint16_t offset = read_u16(r, a);
-    return (uint32_t)(bank - 0x7E) * 0x10000 + offset;
+    return (uint32_t)(bank - RAM_BANK_LOW) * 0x10000 + offset;
 }
 
 // ============================================================================
@@ -54,7 +140,7 @@ uint32_t get_unit_data_ptr(const uint8_t* ram, uint32_t handle) {
  * Class ID is stored at offset +9 within the unit's data block (per ROM_MAP.md).
  */
 uint8_t get_unit_class_id(const uint8_t* ram, uint32_t data_ptr) {
-    return read_u8(ram, data_ptr + 9);
+    return read_u8(ram, data_ptr + UNIT_CLASS_ID_OFFSET);
 }
 
 /**
@@ -63,7 +149,7 @@ uint8_t get_unit_class_id(const uint8_t* ram, uint32_t data_ptr) {
  * Level is stored at offset +10 within the unit's data block.
  */
 int get_unit_level(const uint8_t* ram, uint32_t data_ptr) {
-    return read_u8(ram, data_ptr + 10);
+    return read_u8(ram, data_ptr + UNIT_LEVEL_OFFSET);
 }
 
 /**
@@ -82,13 +168,8 @@ uint32_t get_class_record_ptr(uint8_t class_id) {
  *   +8 = HP, +9 = STR, +10 = MAG, +11 = SKL, +12 = SPD, +13 = DEF, +15 = LCK
  */
 int read_rom_class_growth(const uint8_t* rom, uint32_t class_record_ptr, StatType stat) {
-    if (stat == STAT_HP) {
-        return rom[class_record_ptr + CLASS_HP_GROWTH_OFFSET];  // offset +8
-    } else if (stat == STAT_LCK) {
-        return rom[class_record_ptr + 15];  // LCK at offset +15
-    }
-    // STR=1->+9, MAG=2->+10, SKL=3->+11, SPD=4->+12, DEF=5->+13
-    return rom[class_record_ptr + CLASS_STAT_GROWTH_OFFSET + stat - 1];
+    if (stat < STAT_HP || stat >= STAT_COUNT) return 0;
+    return rom[class_record_ptr + CLASS_GROWTH_OFFSET[stat]];
 }
 
 /**
@@ -98,28 +179,26 @@ int read_rom_class_growth(const uint8_t* rom, uint32_t class_record_ptr, StatTyp
  * Returns 0 for unsupported types or invalid handles.
  */
 uint32_t get_unit_record_ptr(const uint8_t* r, uint32_t h) {
-    if (h < 0x2000 || h > 0xFFE0) return 0;
+    if (h < UNIT_HANDLE_MIN || h > UNIT_HANDLE_MAX) return 0;
 
     uint8_t type = read_u8(r, h);
     // Type 1 (child) and Type 3 records are handled differently in the game engine.
-    if (type != 0 && type != 2) return 0;
+    if (type != UNIT_TYPE_PLAYABLE && type != UNIT_TYPE_NPC_BOSS) return 0;
 
     // Record pointer: class_id at offset +9, low 16-bit address at offset +7
     uint8_t class_byte = read_u8(r, h + 9);
     uint16_t record_offset = read_u16(r, h + 7);
-    return ((uint32_t)(class_byte & 0x3F) << 16) | record_offset;
+    return ((uint32_t)(class_byte & CLASS_ID_MASK) << 16) | record_offset;
 }
 
 /**
  * @brief Reads the total growth rate from a unit's ROM record for a specific stat.
  *
- * HP growth is at UNIT_RECORD_GROWTH_OFFSET, other stats are at offset +stat.
+ * Unit record growth offsets per stat (HP at +20, others at +21..+27).
  */
 int read_rom_total_growth(const uint8_t* rom, uint32_t record_ptr, StatType stat) {
-    if (stat == STAT_HP) {
-        return rom[record_ptr + UNIT_RECORD_GROWTH_OFFSET];
-    }
-    return rom[record_ptr + UNIT_RECORD_GROWTH_OFFSET + stat];
+    if (stat < STAT_HP || stat >= STAT_COUNT) return 0;
+    return rom[record_ptr + UNIT_GROWTH_OFFSET[stat]];
 }
 
 /**
@@ -156,46 +235,18 @@ int get_child_heir_flag(const uint8_t* ram, uint32_t data_ptr) {
  * Explicit mapping ensures consistent comparison between test values and enum types.
  */
 BloodType blood_type_from_byte(uint8_t byte_val) {
-    switch (byte_val) {
-        case 0: return BLOOD_NONE;
-        case 1: return BLOOD_BALDO;
-        case 2: return BLOOD_ODO;
-        case 3: return BLOOD_HEZUL;
-        case 4: return BLOOD_NOBA;
-        case 5: return BLOOD_DAIN;
-        case 6: return BLOOD_NEIR;
-        case 7: return BLOOD_ULIR;
-        case 8: return BLOOD_BLAGI;
-        case 9: return BLOOD_FALA;
-        case 10: return BLOOD_TORDO;
-        case 11: return BLOOD_HOLSETY;
-        case 12: return BLOOD_NARGA;
-        case 13: return BLOOD_LOPUTOUSU;
-        default: return BLOOD_NONE;  // Invalid value
-    }
+    if (byte_val == 0) return BLOOD_NONE;
+    if (byte_val >= 1 && byte_val <= 13) return BLOOD_TYPE_MAP[byte_val - 1];
+    return BLOOD_NONE;  // Invalid value
 }
 
 /**
  * @brief Converts BloodType enum back to raw byte for storage.
  */
 uint8_t blood_type_to_byte(BloodType blood) {
-    switch (blood) {
-        case BLOOD_NONE: return 0;
-        case BLOOD_BALDO: return 1;
-        case BLOOD_ODO: return 2;
-        case BLOOD_HEZUL: return 3;
-        case BLOOD_NOBA: return 4;
-        case BLOOD_DAIN: return 5;
-        case BLOOD_NEIR: return 6;
-        case BLOOD_ULIR: return 7;
-        case BLOOD_BLAGI: return 8;
-        case BLOOD_FALA: return 9;
-        case BLOOD_TORDO: return 10;
-        case BLOOD_HOLSETY: return 11;
-        case BLOOD_NARGA: return 12;
-        case BLOOD_LOPUTOUSU: return 13;
-        default: return 0;  // Invalid
-    }
+    if (blood == BLOOD_NONE) return 0;
+    if (blood >= BLOOD_BALDO && blood < BLOOD_COUNT) return (uint8_t)(blood - BLOOD_BALDO + 1);
+    return 0;  // Invalid
 }
 
 /**
@@ -207,49 +258,17 @@ uint8_t blood_type_to_byte(BloodType blood) {
 BloodType get_unit_blood_type(const uint8_t* ram, uint32_t data_ptr) {
     if (!ram) return BLOOD_NONE;
 
-    // Holy blood at offset UNIT_BLOOD_OFFSET (13 x 2-bit slots, LSB first)
-    // Each slot is 2 bits: 0=none, 1=minor, 2=major
-    // Slots map to blood types: Baldo(0), Odo(1), Hezul(2), etc.
-
-    uint32_t blood_ptr = data_ptr + UNIT_BLOOD_OFFSET;
-    uint8_t byte0 = read_u8(ram, blood_ptr);
-    uint8_t byte1 = read_u8(ram, blood_ptr + 1);
-    uint8_t byte2 = read_u8(ram, blood_ptr + 2);
+    const uint8_t* blood_ptr = ram + data_ptr + UNIT_BLOOD_OFFSET;
 
     // Decode 13 slots (26 bits total)
     for (int i = 0; i < 13; i++) {
-        int slot_offset = i * 2;
-        uint8_t val;
-        if (slot_offset < 8) {
-            val = (byte0 >> slot_offset) & 0x03;
-        } else if (slot_offset < 16) {
-            val = (byte1 >> (slot_offset - 8)) & 0x03;
-        } else {
-            val = (byte2 >> (slot_offset - 16)) & 0x03;
-        }
-
+        uint8_t val = decode_blood_slot(blood_ptr, i);
         if (val == 1 || val == 2) {
-            // Found a blood type - map slot index to BloodType enum
-            switch (i) {
-                case 0: return BLOOD_BALDO;
-                case 1: return BLOOD_ODO;
-                case 2: return BLOOD_HEZUL;
-                case 3: return BLOOD_NOBA;
-                case 4: return BLOOD_DAIN;
-                case 5: return BLOOD_NEIR;
-                case 6: return BLOOD_ULIR;
-                case 7: return BLOOD_BLAGI;
-                case 8: return BLOOD_FALA;
-                case 9: return BLOOD_TORDO;
-                case 10: return BLOOD_HOLSETY;
-                case 11: return BLOOD_NARGA;
-                case 12: return BLOOD_LOPUTOUSU;
-                default: return BLOOD_NONE;
-            }
+            return BLOOD_TYPE_MAP[i];
         }
     }
 
-    return BLOOD_NONE;  // No blood detected
+    return BLOOD_NONE;
 }
 
 // ============================================================================
@@ -331,50 +350,46 @@ RngImpact evaluate_rng_impact(int actual_gain, float expected_gain, float std_de
 // Layer 3: Blood Bonus Calculation (The "Engine")
 // ============================================================================
 
+/* Blood bonus lookup table indexed by BloodType enum */
+const BloodBonus BLOOD_BONUS_MAP[BLOOD_COUNT] = {
+    // NONE   - no bonuses
+    {0, 0, 0, 0, 0, 0, 0, 0},
+    // BALDO  - +20 HP, +10 STR, +10 SKL, +10 LCK
+    {20, 10, 0, 10, 0, 0, 10, 0},
+    // ODO    - +20 HP, +30 SKL
+    {20, 0, 0, 30, 0, 0, 0, 0},
+    // HEZUL  - +20 HP, +30 STR
+    {20, 30, 0, 0, 0, 0, 0, 0},
+    // NOBA   - +20 HP, +10 STR, +10 SPD, +10 DEF
+    {20, 10, 0, 0, 10, 10, 0, 0},
+    // DAIN   - +20 HP, +30 SPD
+    {20, 0, 0, 0, 30, 0, 0, 0},
+    // NEIR   - +20 HP, +30 RES
+    {20, 0, 0, 0, 0, 0, 0, 30},
+    // ULIR   - +20 HP, +30 LCK
+    {20, 0, 0, 0, 0, 0, 30, 0},
+    // BLAGI  - +10 HP, +10 MAG, +10 LCK, +20 RES
+    {10, 0, 10, 0, 0, 0, 10, 20},
+    // FALA   - +20 HP, +30 MAG
+    {20, 0, 30, 0, 0, 0, 0, 0},
+    // TORDO  - +20 HP, +30 MAG
+    {20, 0, 30, 0, 0, 0, 0, 0},
+    // HOLSETY - +20 HP, +30 SPD
+    {20, 0, 0, 0, 30, 0, 0, 0},
+    // NARGA  - +10 HP, +20 MAG
+    {10, 0, 20, 0, 0, 0, 0, 0},
+    // LOPUTOUSU - +10 HP, +20 MAG
+    {10, 0, 20, 0, 0, 0, 0, 0}
+};
+
 /**
  * @brief Returns the blood bonus table entry for a given blood type.
  *
  * Based on holy_blood_info.md from Serenes Forest wiki.
  */
 BloodBonus get_blood_bonus_table(BloodType blood) {
-    BloodBonus bonus = {0, 0, 0, 0, 0, 0, 0, 0};
-
-    switch (blood) {
-        case BLOOD_BALDO:
-            bonus.hp_bonus = 20; bonus.str_bonus = 10;
-            bonus.skl_bonus = 10; bonus.lck_bonus = 10; break;
-        case BLOOD_ODO:
-            bonus.hp_bonus = 20; bonus.skl_bonus = 30; break;
-        case BLOOD_HEZUL:
-            bonus.hp_bonus = 20; bonus.str_bonus = 30; break;
-        case BLOOD_NOBA:
-            bonus.hp_bonus = 20; bonus.str_bonus = 10;
-            bonus.spd_bonus = 10; bonus.def_bonus = 10; break;
-        case BLOOD_DAIN:
-            bonus.hp_bonus = 20; bonus.spd_bonus = 30; break;
-        case BLOOD_NEIR:
-            bonus.hp_bonus = 20; bonus.res_bonus = 30; break;
-        case BLOOD_ULIR:
-            bonus.hp_bonus = 20; bonus.lck_bonus = 30; break;
-        case BLOOD_BLAGI:
-            bonus.hp_bonus = 10; bonus.mag_bonus = 10;
-            bonus.lck_bonus = 10; bonus.res_bonus = 20; break;
-        case BLOOD_FALA:
-            bonus.hp_bonus = 20; bonus.mag_bonus = 30; break;
-        case BLOOD_TORDO:
-            bonus.hp_bonus = 20; bonus.mag_bonus = 30; break;
-        case BLOOD_HOLSETY:
-            bonus.hp_bonus = 20; bonus.spd_bonus = 30; break;
-        case BLOOD_NARGA:
-            bonus.hp_bonus = 10; bonus.mag_bonus = 20; break;
-        case BLOOD_LOPUTOUSU:
-            bonus.hp_bonus = 10; bonus.mag_bonus = 20; break;
-        default:
-            // No blood or unknown type
-            break;
-    }
-
-    return bonus;
+    if (blood < BLOOD_NONE || blood >= BLOOD_COUNT) return (BloodBonus){0};
+    return BLOOD_BONUS_MAP[blood];
 }
 
 /**
@@ -398,7 +413,7 @@ int calculate_blood_bonus_total(BloodType blood) {
  */
 int calculate_inherited_growth_rate(int same_gender_base_growth, int other_gender_base_growth, BloodType child_blood) {
     int base = same_gender_base_growth + (other_gender_base_growth / 2);
-    
+
     // Add blood bonus if applicable
     if (child_blood != BLOOD_NONE) {
         BloodBonus bonus = get_blood_bonus_table(child_blood);
@@ -408,7 +423,7 @@ int calculate_inherited_growth_rate(int same_gender_base_growth, int other_gende
                           bonus.lck_bonus + bonus.res_bonus;
         base += total_bonus / 8;  // Simple average of bonuses
     }
-    
+
     return base;
 }
 
@@ -461,17 +476,8 @@ BloodType determine_child_blood_type(BloodType same_gender_parent_blood,
  * @brief Stat label lookup table.
  */
 const char* stat_label(StatType s) {
-    switch (s) {
-        case STAT_HP:  return "HP";
-        case STAT_STR: return "SP";
-        case STAT_MAG: return "MT";
-        case STAT_SKL: return "LK";
-        case STAT_SPD: return "SD";
-        case STAT_DEF: return "DF";
-        case STAT_RES: return "RS"; 
-        case STAT_LCK: return "LK";
-        default:       return "?";
-    }
+    if (s < 0 || s >= STAT_COUNT) return "?";
+    return STAT_LABELS[s];
 }
 
 // --- Forward declarations for type-specific helpers ---
@@ -485,19 +491,19 @@ void compute_class_based_stats(const uint8_t* ram, const uint8_t* rom, int romLe
 void get_unit_growth_stat(const uint8_t* ram, const uint8_t* rom, int romLen, uint32_t handle, StatType stat, GrowthStatInfo* out) {
     if (!ram || !handle || !out) return;
 
-    // Initialize output structure
+    // Initialize output structure (now uses nested structs)
     memset(out, 0, sizeof(GrowthStatInfo));
 
     uint8_t type = get_unit_type(ram, handle);
     switch (type) {
-        case 0:
-        case 2:
+        case UNIT_TYPE_PLAYABLE:
+        case UNIT_TYPE_NPC_BOSS:
             compute_fixed_stats(ram, rom, romLen, handle, stat, out);
             break;
-        case 1:
+        case UNIT_TYPE_CHILD:
             compute_inherited_child_stats(ram, rom, romLen, handle, stat, out);
             break;
-        case 3:
+        case UNIT_TYPE_CLASS_BASED:
             compute_class_based_stats(ram, rom, romLen, handle, stat, out);
             break;
         default:
@@ -532,19 +538,19 @@ void compute_fixed_stats(const uint8_t* ram, const uint8_t* rom, int romLen, uin
 
     // Layer 2: Get current level
     int level = get_unit_level(ram, data_ptr);
-    
+
     // Layer 3: Calculate expected value statistics
     float p = (float)total_growth_rate / 100.0f;
-    out->current_level = level;
-    out->expected_gain_per_level = p;  // Mean per level-up
-    out->std_dev_per_level = sqrtf(p * (1.0f - p));  // Std dev per level-up
+    out->expectation.level = level;
+    out->expectation.mean = p;  // Mean per level-up
+    out->expectation.std_dev = sqrtf(p * (1.0f - p));  // Std dev per level-up
 
     // Blood info populated separately by get_all_blood_types_for_stat()
 
-    // Store results
-    out->class_base_growth = class_base_growth;
-    out->personal_modifier = personal_modifier;
-    out->total_growth_rate = total_growth_rate;
+    // Store results using new nested struct layout
+    out->growth.base = class_base_growth;
+    out->growth.personal = personal_modifier;
+    out->growth.total = total_growth_rate;
 }
 
 /** @brief Computes inherited growth stats for Type 1 children from parent data */
@@ -568,32 +574,22 @@ void compute_inherited_child_stats(const uint8_t* ram, const uint8_t* rom, int r
     // Type 1 children don't store parent handles inline - they're computed by the game engine at runtime.
     // For display purposes, we return the child's class growth rate as the inherited estimate.
     // In production, this would require looking up parents by char ID or army slot.
-    
+
     int inherited_growth = class_base_growth;  // Fallback: use class base growth
-    BloodType child_blood = BLOOD_NONE;
-    
-    // Heir flag indicates which parent's blood to use (1=father, 0=mother)
-    // Without parent data available inline, we default to no blood
-    if (heir_flag == 1) {
-        // Father heir - would need father lookup to determine blood type
-    } else {
-        // Mother heir - would need mother lookup to determine blood type
-    }
 
     // Compute personal modifier (inherited - class base)
     int personal_modifier = inherited_growth - class_base_growth;
 
     // Calculate expected value statistics based on inherited growth rate
     float p = (float)inherited_growth / 100.0f;
-    out->current_level = level;
-    out->expected_gain_per_level = p;
-    out->std_dev_per_level = sqrtf(p * (1.0f - p));
+    out->expectation.level = level;
+    out->expectation.mean = p;
+    out->expectation.std_dev = sqrtf(p * (1.0f - p));
 
-    // Store results
-    out->class_base_growth = class_base_growth;
-    out->personal_modifier = personal_modifier;
-    out->total_growth_rate = inherited_growth;
-    // Blood info populated separately by get_all_blood_types_for_stat()
+    // Store results using new nested struct layout
+    out->growth.base = class_base_growth;
+    out->growth.personal = personal_modifier;
+    out->growth.total = inherited_growth;
 }
 
 /** @brief Computes stats for Type 3 class-based units (generic enemies/bosses) */
@@ -606,7 +602,7 @@ void compute_class_based_stats(const uint8_t* ram, const uint8_t* rom, int romLe
 
     // Get class base stat and growth from ROM
     uint32_t class_record_ptr = get_class_record_ptr(class_id);
-    
+
     // Class bases: HP at offset CLASS_HP_BASE_OFFSET, other stats at offset CLASS_STAT_BASE_OFFSET+stat
     int class_base_stat;
     if (stat == STAT_HP) {
@@ -625,25 +621,20 @@ void compute_class_based_stats(const uint8_t* ram, const uint8_t* rom, int romLe
 
     // Type 3 stats = class base + class growth x level
     int total_stat = class_base_stat + (class_growth_rate * level / 100);
-    
+
     // For display: personal_modifier represents the growth contribution
     int personal_modifier = (class_growth_rate * level) / 100;
 
     // Calculate expected value statistics based on class growth rate
     float p = (float)class_growth_rate / 100.0f;
-    out->current_level = level;
-    out->expected_gain_per_level = p;
-    out->std_dev_per_level = sqrtf(p * (1.0f - p));
+    out->expectation.level = level;
+    out->expectation.mean = p;
+    out->expectation.std_dev = sqrtf(p * (1.0f - p));
 
-    // Store results
-    out->class_base_growth = class_base_stat;  // Using base stat as display value
-    out->personal_modifier = personal_modifier;
-    out->total_growth_rate = total_stat;
-    // Class-based units have no blood — zero arrays and count
-    out->blood_type_count = 0;
-    for (int b = 0; b < 2; b++) {
-        out->blood_types[b] = BLOOD_NONE;
-    }
+    // Store results using new nested struct layout
+    out->growth.base = class_base_stat;  // Using base stat as display value
+    out->growth.personal = personal_modifier;
+    out->growth.total = total_stat;
 }
 
 /**
@@ -671,9 +662,9 @@ void format_stat_display_line(StatType stat, const GrowthStatInfo* info, StatDis
     // Determine impact: compare actual gain vs expected over levels
     // Expected gain = growth_rate * levels / 100 (binomial mean)
     // Actual gain = personal_modifier (total - class base)
-    float expected_gain = (float)info->class_base_growth * info->current_level / 100.0f;
-    float total_std_dev = sqrtf((float)info->current_level * info->expected_gain_per_level * (1.0f - info->expected_gain_per_level));
-    int actual_gain = info->personal_modifier;
+    float expected_gain = (float)info->growth.base * info->expectation.level / 100.0f;
+    float total_std_dev = sqrtf((float)info->expectation.level * info->expectation.mean * (1.0f - info->expectation.mean));
+    int actual_gain = info->growth.personal;
 
     if ((float)actual_gain > expected_gain + BLESSED_SIGMA_THRESHOLD * total_std_dev) {
         impact = RNG_BLESSED;
@@ -683,21 +674,26 @@ void format_stat_display_line(StatType stat, const GrowthStatInfo* info, StatDis
         impact = RNG_NEUTRAL;
     }
 
-    // Format: "STAT base+personal=total gr:N [X]"
-    const char* impact_char;
-    switch (impact) {
-        case RNG_BLESSED: impact_char = "[B]"; break;
-        case RNG_CURSED:  impact_char = "[C]"; break;
-        default:          impact_char = "[N]"; break;
-    }
+    // Format: "STAT base+personal=total [X]" + blood suffix
+    // Impact string lookup (RNG_NEUTRAL=0→"[N]", RNG_BLESSED=1→"[B]", RNG_CURSED=-1→"[C]")
+    const char* impact_char = IMPACT_STR_MAP[(int)impact + 1];
 
-    snprintf(out->text, sizeof out->text, "%s %2d+%d=%2d gr:%d %s",
+    // Build base string
+    int len = snprintf(out->text, sizeof out->text, "%s %2d+%d=%2d %s",
              label,
-             info->class_base_growth,
-             info->personal_modifier,
-             info->total_growth_rate,
-             info->total_growth_rate,
+             info->growth.base,
+             info->growth.personal,
+             info->growth.total,
              impact_char);
+
+    // Append blood info if present (matching menu column layout)
+    int bc = get_blood_count(info);
+    for (int b = 0; b < bc && len < (int)(sizeof out->text) - 16; b++) {
+        BloodType bt = get_blood_type_at(info, b);
+        int hp_bonus = get_blood_bonus_for_stat(info, b, STAT_HP);
+        len += snprintf(out->text + len, sizeof out->text - (size_t)len,
+                        " [%s +%d%%]", blood_type_name(bt), hp_bonus);
+    }
 
     out->impact = impact;
 }
@@ -716,7 +712,58 @@ void format_all_stats_display(const GrowthStatInfo* growths, StatDisplayLine* ou
 }
 
 // ============================================================================
-// Multi-Blood Type Detection
+// Layer 4: Column Format for Menu/ImGui Table Rendering
+// ============================================================================
+
+/**
+ * @brief Formats all 7 stats into column-ready structs for ImGui table rendering.
+ *
+ * Populates StatDisplayColumn array matching GitHub menu.cpp layout:
+ *   Stat | Class | FromXP | Total | TotalGrowthRate | ClassGrowthRate | Blood(s)
+ */
+void format_all_stats_columns(const GrowthStatInfo* growths, StatDisplayColumn* out_cols) {
+    if (!growths || !out_cols) return;
+
+    for (int i = 0; i < STAT_COUNT; i++) {
+        const GrowthStatInfo* info = &growths[i];
+        StatDisplayColumn* col = &out_cols[i];
+        
+        // Stat name
+        strncpy(col->stat_name, stat_label((StatType)i), sizeof(col->stat_name) - 1);
+        col->stat_name[sizeof(col->stat_name) - 1] = '\0';
+        
+        // Growth data (nested struct layout)
+        col->class_base_growth = info->growth.base;
+        col->personal_modifier = info->growth.personal;
+        col->total_gain = info->growth.total;
+        
+        // Total growth rate includes blood bonuses for this stat
+        int total_gr = info->growth.total;
+        int bc = get_blood_count(info);
+        for (int b = 0; b < bc; b++) {
+            total_gr += get_blood_bonus_for_stat(info, b, (StatType)i);
+        }
+        col->total_growth_rate = total_gr;
+        
+        // Class growth rate
+        col->class_growth_rate = info->growth.base;
+        
+        // Blood count and bonuses per stat
+        col->blood_count = bc;
+        for (int b = 0; b < 2; b++) {
+            if (b < bc) {
+                for (int s = 0; s < STAT_COUNT; s++) {
+                    col->blood_bonus[b][s] = get_blood_bonus_for_stat(info, b, (StatType)s);
+                }
+            } else {
+                memset(col->blood_bonus[b], 0, sizeof(col->blood_bonus[b]));
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Multi-Blood Type Detection (Cleaned up - no more verbose loops)
 // ============================================================================
 
 /**
@@ -728,151 +775,68 @@ void format_all_stats_display(const GrowthStatInfo* growths, StatDisplayLine* ou
 void get_all_blood_types(const uint8_t* ram, uint32_t data_ptr, GrowthStatInfo* out) {
     if (!ram || !data_ptr || !out) return;
 
-    // Zero all per-blood-type bonus arrays
-    for (int b = 0; b < 2; b++) {
-        out->blood_bonus_hp[b] = 0;
-        out->blood_bonus_str[b] = 0;
-        out->blood_bonus_mag[b] = 0;
-        out->blood_bonus_skl[b] = 0;
-        out->blood_bonus_spd[b] = 0;
-        out->blood_bonus_def[b] = 0;
-        out->blood_bonus_lck[b] = 0;
-        out->blood_bonus_res[b] = 0;
-    }
-    out->blood_type_count = 0;
+    memset(out->blood.entries, 0, sizeof(out->blood.entries));
+    out->blood.count = 0;
 
-    // Holy blood at offset UNIT_BLOOD_OFFSET (13 x 2-bit slots, LSB first)
-    uint32_t blood_ptr = data_ptr + UNIT_BLOOD_OFFSET;
-    uint8_t byte0 = read_u8(ram, blood_ptr);
-    uint8_t byte1 = read_u8(ram, blood_ptr + 1);
-    uint8_t byte2 = read_u8(ram, blood_ptr + 2);
+    const uint8_t* blood_ptr = ram + data_ptr + UNIT_BLOOD_OFFSET;
 
-    // Decode all 13 slots (26 bits total)
-    for (int i = 0; i < 13 && out->blood_type_count < 2; i++) {
-        int slot_offset = i * 2;
-        uint8_t val;
-        if (slot_offset < 8) {
-            val = (byte0 >> slot_offset) & 0x03;
-        } else if (slot_offset < 16) {
-            val = (byte1 >> (slot_offset - 8)) & 0x03;
-        } else {
-            val = (byte2 >> (slot_offset - 16)) & 0x03;
-        }
-
+    for (int i = 0; i < 13 && out->blood.count < 2; i++) {
+        uint8_t val = decode_blood_slot(blood_ptr, i);
         if (val == 1 || val == 2) {
-            // Found a blood type - map slot index to BloodType enum
-            switch (i) {
-                case 0: out->blood_types[out->blood_type_count++] = BLOOD_BALDO; break;
-                case 1: out->blood_types[out->blood_type_count++] = BLOOD_ODO; break;
-                case 2: out->blood_types[out->blood_type_count++] = BLOOD_HEZUL; break;
-                case 3: out->blood_types[out->blood_type_count++] = BLOOD_NOBA; break;
-                case 4: out->blood_types[out->blood_type_count++] = BLOOD_DAIN; break;
-                case 5: out->blood_types[out->blood_type_count++] = BLOOD_NEIR; break;
-                case 6: out->blood_types[out->blood_type_count++] = BLOOD_ULIR; break;
-                case 7: out->blood_types[out->blood_type_count++] = BLOOD_BLAGI; break;
-                case 8: out->blood_types[out->blood_type_count++] = BLOOD_FALA; break;
-                case 9: out->blood_types[out->blood_type_count++] = BLOOD_TORDO; break;
-                case 10: out->blood_types[out->blood_type_count++] = BLOOD_HOLSETY; break;
-                case 11: out->blood_types[out->blood_type_count++] = BLOOD_NARGA; break;
-                case 12: out->blood_types[out->blood_type_count++] = BLOOD_LOPUTOUSU; break;
-                default: break;
-            }
+            out->blood.entries[out->blood.count].type = BLOOD_TYPE_MAP[i];
+            out->blood.entries[out->blood.count].bonus = get_blood_bonus_table(BLOOD_TYPE_MAP[i]);
+            out->blood.count++;
         }
-    }
-
-    // Store per-blood-type stat bonuses (each blood type's contribution separately)
-    for (int b = 0; b < out->blood_type_count; b++) {
-        BloodBonus bonus = get_blood_bonus_table(out->blood_types[b]);
-        out->blood_bonus_hp[b] = bonus.hp_bonus;
-        out->blood_bonus_str[b] = bonus.str_bonus;
-        out->blood_bonus_mag[b] = bonus.mag_bonus;
-        out->blood_bonus_skl[b] = bonus.skl_bonus;
-        out->blood_bonus_spd[b] = bonus.spd_bonus;
-        out->blood_bonus_def[b] = bonus.def_bonus;
-        out->blood_bonus_lck[b] = bonus.lck_bonus;
-        out->blood_bonus_res[b] = bonus.res_bonus;
     }
 }
 
 // ============================================================================
-// Per-Stat Blood Bonus Filler
+// Multi-Stat Blood Bonus Filler
 // ============================================================================
 
 /**
  * @brief Detects blood types and fills per-stat bonus for the given stat type.
  *
- * Scans all 13 x 2-bit slots, stores up to 2 blood types,
- * then populates the correct per-stat bonus array index based on StatType.
+ * Delegates to get_all_blood_types() — the nested struct layout stores all 8
+ * stat bonuses per entry, so the stat parameter is unused but kept for API compat.
  */
 void get_all_blood_types_for_stat(const uint8_t* ram, uint32_t data_ptr, GrowthStatInfo* out, StatType stat) {
-    if (!ram || !data_ptr || !out) return;
+    (void)stat;  // Unused — all bonuses stored per entry in nested struct layout
+    get_all_blood_types(ram, data_ptr, out);
+}
 
-    // Zero all per-blood-type bonus arrays
-    for (int b = 0; b < 2; b++) {
-        out->blood_bonus_hp[b] = 0;
-        out->blood_bonus_str[b] = 0;
-        out->blood_bonus_mag[b] = 0;
-        out->blood_bonus_skl[b] = 0;
-        out->blood_bonus_spd[b] = 0;
-        out->blood_bonus_def[b] = 0;
-        out->blood_bonus_lck[b] = 0;
-        out->blood_bonus_res[b] = 0;
-    }
-    out->blood_type_count = 0;
+// ============================================================================
+// Blood Display Helpers (for table/column layout)
+// ============================================================================
 
-    // Holy blood at offset UNIT_BLOOD_OFFSET (13 x 2-bit slots, LSB first)
-    uint32_t blood_ptr = data_ptr + UNIT_BLOOD_OFFSET;
-    uint8_t byte0 = read_u8(ram, blood_ptr);
-    uint8_t byte1 = read_u8(ram, blood_ptr + 1);
-    uint8_t byte2 = read_u8(ram, blood_ptr + 2);
+/** @brief Returns the number of blood types on this unit */
+int get_blood_count(const GrowthStatInfo* info) {
+    if (!info) return 0;
+    return info->blood.count;
+}
 
-    // Decode all 13 slots (26 bits total)
-    for (int i = 0; i < 13 && out->blood_type_count < 2; i++) {
-        int slot_offset = i * 2;
-        uint8_t val;
-        if (slot_offset < 8) {
-            val = (byte0 >> slot_offset) & 0x03;
-        } else if (slot_offset < 16) {
-            val = (byte1 >> (slot_offset - 8)) & 0x03;
-        } else {
-            val = (byte2 >> (slot_offset - 16)) & 0x03;
-        }
+/** @brief Returns the BloodType enum at given index (0-based) */
+BloodType get_blood_type_at(const GrowthStatInfo* info, int index) {
+    if (!info || index < 0 || index >= info->blood.count)
+        return BLOOD_NONE;
+    return info->blood.entries[index].type;
+}
 
-        if (val == 1 || val == 2) {
-            // Found a blood type - map slot index to BloodType enum
-            switch (i) {
-                case 0: out->blood_types[out->blood_type_count++] = BLOOD_BALDO; break;
-                case 1: out->blood_types[out->blood_type_count++] = BLOOD_ODO; break;
-                case 2: out->blood_types[out->blood_type_count++] = BLOOD_HEZUL; break;
-                case 3: out->blood_types[out->blood_type_count++] = BLOOD_NOBA; break;
-                case 4: out->blood_types[out->blood_type_count++] = BLOOD_DAIN; break;
-                case 5: out->blood_types[out->blood_type_count++] = BLOOD_NEIR; break;
-                case 6: out->blood_types[out->blood_type_count++] = BLOOD_ULIR; break;
-                case 7: out->blood_types[out->blood_type_count++] = BLOOD_BLAGI; break;
-                case 8: out->blood_types[out->blood_type_count++] = BLOOD_FALA; break;
-                case 9: out->blood_types[out->blood_type_count++] = BLOOD_TORDO; break;
-                case 10: out->blood_types[out->blood_type_count++] = BLOOD_HOLSETY; break;
-                case 11: out->blood_types[out->blood_type_count++] = BLOOD_NARGA; break;
-                case 12: out->blood_types[out->blood_type_count++] = BLOOD_LOPUTOUSU; break;
-                default: break;
-            }
-        }
-    }
-
-    // Fill the correct per-stat bonus array based on StatType
-    for (int b = 0; b < out->blood_type_count; b++) {
-        BloodBonus bonus = get_blood_bonus_table(out->blood_types[b]);
-        switch (stat) {
-            case STAT_HP:   out->blood_bonus_hp[b] = bonus.hp_bonus; break;
-            case STAT_STR:  out->blood_bonus_str[b] = bonus.str_bonus; break;
-            case STAT_MAG:  out->blood_bonus_mag[b] = bonus.mag_bonus; break;
-            case STAT_SKL:  out->blood_bonus_skl[b] = bonus.skl_bonus; break;
-            case STAT_SPD:  out->blood_bonus_spd[b] = bonus.spd_bonus; break;
-            case STAT_DEF:  out->blood_bonus_def[b] = bonus.def_bonus; break;
-            case STAT_RES:  out->blood_bonus_res[b] = bonus.res_bonus; break;
-            case STAT_LCK:  out->blood_bonus_lck[b] = bonus.lck_bonus; break;
-            default: break;
-        }
+/** @brief Returns the bonus percentage for a specific stat and blood index */
+int get_blood_bonus_for_stat(const GrowthStatInfo* info, int blood_index, StatType stat) {
+    if (!info || blood_index < 0 || blood_index >= info->blood.count)
+        return 0;
+    const BloodBonus* bonus = &info->blood.entries[blood_index].bonus;
+    switch (stat) {
+        case STAT_HP:   return bonus->hp_bonus;
+        case STAT_STR:  return bonus->str_bonus;
+        case STAT_MAG:  return bonus->mag_bonus;
+        case STAT_SKL:  return bonus->skl_bonus;
+        case STAT_SPD:  return bonus->spd_bonus;
+        case STAT_DEF:  return bonus->def_bonus;
+        case STAT_LCK:  return bonus->lck_bonus;
+        case STAT_RES:  return bonus->res_bonus;
+        default:        return 0;
     }
 }
 
@@ -880,26 +844,19 @@ void get_all_blood_types_for_stat(const uint8_t* ram, uint32_t data_ptr, GrowthS
 // Blood Type Name Getter
 // ============================================================================
 
+/* Blood type name lookup table */
+const char* BLOOD_NAME_MAP[BLOOD_COUNT] = {
+    "None", "Baldo", "Odo", "Hezul", "Noba", "Dain",
+    "Neir", "Ulir", "Blagi", "Fala", "Tordo",
+    "Holsety", "Narga", "Loputyusu"
+};
+
 /**
  * @brief Returns the human-readable name of a blood type.
  */
 const char* blood_type_name(BloodType blood) {
-    switch (blood) {
-        case BLOOD_BALDO: return "Baldo";
-        case BLOOD_ODO: return "Odo";
-        case BLOOD_HEZUL: return "Hezul";
-        case BLOOD_NOBA: return "Noba";
-        case BLOOD_DAIN: return "Dain";
-        case BLOOD_NEIR: return "Neir";
-        case BLOOD_ULIR: return "Ulir";
-        case BLOOD_BLAGI: return "Blagi";
-        case BLOOD_FALA: return "Fala";
-        case BLOOD_TORDO: return "Tordo";
-        case BLOOD_HOLSETY: return "Holsety";
-        case BLOOD_NARGA: return "Narga";
-        case BLOOD_LOPUTOUSU: return "Loputyusu";
-        default: return "None";
-    }
+    if (blood < BLOOD_NONE || blood >= BLOOD_COUNT) return "Unknown";
+    return BLOOD_NAME_MAP[blood];
 }
 
 // ============================================================================
@@ -909,38 +866,15 @@ const char* blood_type_name(BloodType blood) {
 /**
  * @brief Estimates the RNG impact of a stat change compared to expectation.
  *
- * Legacy function preserved for backward compatibility with existing code.
+ * Legacy function preserved for backward compatibility — delegates to evaluate_rng_impact().
  */
 void get_stat_estimation(int growth_rate, int actual_gain, int levels, StatEstimation* out) {
     if (!out) return;
 
-    float p = (float)growth_rate / 100.0f;
     float expected = calculate_expected_gain(growth_rate, levels);
-
-    // Variance of Binomial distribution: Var(X) = n * p * (1 - p)
-    float variance = (float)levels * p * (1.0f - p);
-    float std_dev = sqrtf(variance);
+    float std_dev  = calculate_std_dev(growth_rate, levels);
 
     out->expected_gain = expected;
-    out->actual_gain = actual_gain;
-
-    // If std_dev is extremely small, we treat it as 0 to avoid issues,
-    // but comparison still works.
-    if (std_dev < 0.001f) {
-        if ((float)actual_gain > expected + 0.5f) { // Small epsilon for float comparison
-            out->impact = RNG_BLESSED;
-        } else if ((float)actual_gain < expected - 0.5f) {
-            out->impact = RNG_CURSED;
-        } else {
-            out->impact = RNG_NEUTRAL;
-        }
-    } else {
-        if (expected + (BLESSED_SIGMA_THRESHOLD * std_dev) < (float)actual_gain) {
-            out->impact = RNG_BLESSED;
-        } else if (expected + (CURSED_SIGMA_THRESHOLD * std_dev) > (float)actual_gain) {
-            out->impact = RNG_CURSED;
-        } else {
-            out->impact = RNG_NEUTRAL;
-        }
-    }
+    out->actual_gain   = actual_gain;
+    out->impact        = evaluate_rng_impact(actual_gain, expected, std_dev);
 }
