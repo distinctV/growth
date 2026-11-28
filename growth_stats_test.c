@@ -8,12 +8,16 @@
 #include <assert.h>
 #include <string.h>
 #include <math.h>
-#include "../src/growth_stats.h"
+#include "growth_stats.h"
 
 // Test infrastructure
 static int tests_run = 0;
 static int tests_passed = 0;
 static int tests_failed = 0;
+
+/* Forward declarations for new blood display tests */
+void test_blood_display_helpers(void);
+void test_format_all_stats_columns(void);
 
 #define TEST_ASSERT(cond, desc) do { \
     tests_run++; \
@@ -343,9 +347,9 @@ void test_compute_fixed_stats() {
 
     compute_fixed_stats(ram, rom, sizeof(rom), handle, STAT_HP, &info);
     // class_base_growth comes from read_rom_class_growth which returns growth rate at offset +8
-    TEST_ASSERT(info.class_base_growth == 75, "Class base HP growth = 75");
-    TEST_ASSERT(info.total_growth_rate == 25, "Total HP = 25");
-    TEST_ASSERT(info.personal_modifier == -50, "Personal modifier (total - class) = 25 - 75 = -50");
+    TEST_ASSERT(info.growth.base == 75, "Class base HP growth = 75");
+    TEST_ASSERT(info.growth.total == 25, "Total HP = 25");
+    TEST_ASSERT(info.growth.personal == -50, "Personal modifier (total - class) = 25 - 75 = -50");
 }
 
 void test_compute_inherited_child_stats() {
@@ -371,8 +375,8 @@ void test_compute_inherited_child_stats() {
 
     compute_inherited_child_stats(ram, rom, sizeof(rom), handle, STAT_HP, &info);
     // class_base_growth comes from read_rom_class_growth which returns growth rate at offset +8
-    TEST_ASSERT(info.class_base_growth == 75, "Class base HP growth = 75");
-    TEST_ASSERT(info.blood_type_count == 0, "No blood without parent lookup");
+    TEST_ASSERT(info.growth.base == 75, "Class base HP growth = 75");
+    TEST_ASSERT(info.blood.count == 0, "No blood without parent lookup");
 }
 
 void test_compute_class_based_stats() {
@@ -407,10 +411,10 @@ void test_compute_class_based_stats() {
     // Test HP stat: class_base=20, growth=75, level=10
     // total = 20 + (75 * 10 / 100) = 20 + 7 = 27
     compute_class_based_stats(ram, rom, sizeof(rom), handle, STAT_HP, &info);
-    TEST_ASSERT(info.class_base_growth == 20, "Class base HP = 20");
-    TEST_ASSERT(info.total_growth_rate == 27, "Total HP = 20 + 7 = 27");
-    TEST_ASSERT(info.personal_modifier == 7, "Personal modifier (growth contribution) = 7");
-    TEST_ASSERT(info.blood_type_count == 0, "Class-based units have no blood");
+    TEST_ASSERT(info.growth.base == 20, "Class base HP = 20");
+    TEST_ASSERT(info.growth.total == 27, "Total HP = 20 + 7 = 27");
+    TEST_ASSERT(info.growth.personal == 7, "Personal modifier (growth contribution) = 7");
+    TEST_ASSERT(info.blood.count == 0, "Class-based units have no blood");
 }
 
 // ============================================================================
@@ -572,12 +576,12 @@ void test_stat_label() {
     printf("\n=== Layer 4: stat_label ===\n");
 
     TEST_ASSERT(strcmp(stat_label(STAT_HP), "HP") == 0, "stat_label(HP) = 'HP'");
-    TEST_ASSERT(strcmp(stat_label(STAT_STR), "SP") == 0, "stat_label(STR) = 'SP'");
-    TEST_ASSERT(strcmp(stat_label(STAT_MAG), "MT") == 0, "stat_label(MAG) = 'MT'");
-    TEST_ASSERT(strcmp(stat_label(STAT_SKL), "LK") == 0, "stat_label(SKL) = 'LK'");
-    TEST_ASSERT(strcmp(stat_label(STAT_SPD), "SD") == 0, "stat_label(SPD) = 'SD'");
-    TEST_ASSERT(strcmp(stat_label(STAT_DEF), "DF") == 0, "stat_label(DEF) = 'DF'");
-    TEST_ASSERT(strcmp(stat_label(STAT_RES), "RS") == 0, "stat_label(RES) = 'RS'");
+    TEST_ASSERT(strcmp(stat_label(STAT_STR), "STR") == 0, "stat_label(STR) = 'STR'");
+    TEST_ASSERT(strcmp(stat_label(STAT_MAG), "MAG") == 0, "stat_label(MAG) = 'MAG'");
+    TEST_ASSERT(strcmp(stat_label(STAT_SKL), "SKL") == 0, "stat_label(SKL) = 'SKL'");
+    TEST_ASSERT(strcmp(stat_label(STAT_SPD), "SPD") == 0, "stat_label(SPD) = 'SPD'");
+    TEST_ASSERT(strcmp(stat_label(STAT_DEF), "DEF") == 0, "stat_label(DEF) = 'DEF'");
+    TEST_ASSERT(strcmp(stat_label(STAT_RES), "RES") == 0, "stat_label(RES) = 'RES'");
 }
 
 void test_format_stat_display_line() {
@@ -587,54 +591,59 @@ void test_format_stat_display_line() {
     StatDisplayLine line;
 
     // Blessed case: total > expected + std_dev
-    info.class_base_growth = 10;
-    info.personal_modifier = 5;
-    info.total_growth_rate = 15;
-    info.expected_gain_per_level = 0.1f;
-    info.std_dev_per_level = 0.3f;
+    info.growth.base = 10;
+    info.growth.personal = 5;
+    info.growth.total = 15;
+    info.expectation.mean = 0.1f;
+    info.expectation.std_dev = 0.3f;
+    info.expectation.level = 5;
 
     format_stat_display_line(STAT_HP, &info, &line);
     TEST_ASSERT(line.impact == RNG_BLESSED, "Blessed display: total=15 > expected");
     TEST_ASSERT(strstr(line.text, "[B]") != NULL, "Display contains [B] indicator");
 
     // Cursed case: total < expected - std_dev
-    info.class_base_growth = 10;
-    info.personal_modifier = -3;
-    info.total_growth_rate = 7;
-    info.expected_gain_per_level = 0.1f;
-    info.std_dev_per_level = 0.3f;
+    info.growth.base = 10;
+    info.growth.personal = -3;
+    info.growth.total = 7;
+    info.expectation.mean = 0.1f;
+    info.expectation.std_dev = 0.3f;
+    info.expectation.level = 5;
 
     format_stat_display_line(STAT_STR, &info, &line);
     TEST_ASSERT(line.impact == RNG_CURSED, "Cursed display: total=7 < expected");
     TEST_ASSERT(strstr(line.text, "[C]") != NULL, "Display contains [C] indicator");
 
     // Neutral case (within sigma bounds)
-    info.class_base_growth = 10;
-    info.personal_modifier = 0;
-    info.total_growth_rate = 10;
-    info.expected_gain_per_level = 0.1f;
-    info.std_dev_per_level = 0.3f;
+    info.growth.base = 10;
+    info.growth.personal = 0;
+    info.growth.total = 10;
+    info.expectation.mean = 0.1f;
+    info.expectation.std_dev = 0.3f;
+    info.expectation.level = 5;
 
     format_stat_display_line(STAT_MAG, &info, &line);
     TEST_ASSERT(line.impact == RNG_NEUTRAL, "Neutral display: within bounds");
     TEST_ASSERT(strstr(line.text, "[N]") != NULL, "Display contains [N] indicator");
 
     // Edge cases: zero growth, negative modifier
-    info.class_base_growth = 0;
-    info.personal_modifier = 0;
-    info.total_growth_rate = 0;
-    info.expected_gain_per_level = 0.0f;
-    info.std_dev_per_level = 0.0f;
+    info.growth.base = 0;
+    info.growth.personal = 0;
+    info.growth.total = 0;
+    info.expectation.mean = 0.0f;
+    info.expectation.std_dev = 0.0f;
+    info.expectation.level = 1;
 
     format_stat_display_line(STAT_SPD, &info, &line);
     TEST_ASSERT(strlen(line.text) > 0, "Zero growth displays text");
 
-    // High growth rates
-    info.class_base_growth = 255;
-    info.personal_modifier = 10;
-    info.total_growth_rate = 265;
-    info.expected_gain_per_level = 2.55f;
-    info.std_dev_per_level = 0.5f;
+    // High growth rates - actual > expected + std_dev → Blessed
+    info.growth.base = 10;
+    info.growth.personal = 5;
+    info.growth.total = 15;
+    info.expectation.mean = 0.8f;  // p = 80% growth rate
+    info.expectation.std_dev = 0.4f;
+    info.expectation.level = 10;
 
     format_stat_display_line(STAT_LCK, &info, &line);
     TEST_ASSERT(line.impact == RNG_BLESSED, "High growth displays as blessed");
@@ -648,11 +657,11 @@ void test_format_all_stats_display() {
 
     // Setup mock growth data for all stats (no memory access needed)
     for (int i = 0; i < STAT_COUNT; i++) {
-        growths[i].class_base_growth = 10 + i * 2;
-        growths[i].personal_modifier = i;
-        growths[i].total_growth_rate = 10 + i * 3;
-        growths[i].expected_gain_per_level = 0.1f + (float)i * 0.05f;
-        growths[i].std_dev_per_level = 0.2f;
+        growths[i].growth.base = 10 + i * 2;
+        growths[i].growth.personal = i;
+        growths[i].growth.total = 10 + i * 3;
+        growths[i].expectation.mean = 0.1f + (float)i * 0.05f;
+        growths[i].expectation.std_dev = 0.2f;
     }
 
     format_all_stats_display(growths, lines);
@@ -743,6 +752,10 @@ int main(void) {
     // Legacy API Compatibility
     test_get_stat_estimation();
 
+    // Layer 4: Blood Display Helpers
+    test_blood_display_helpers();
+    test_format_all_stats_columns();
+
     printf("\n========================================\n");
     printf("RESULTS: %d/%d passed, %d failed\n", tests_passed, tests_run, tests_failed);
     printf("========================================\n");
@@ -754,4 +767,78 @@ int main(void) {
 
     printf("\nALL TESTS PASSED SUCCESSFULLY!\n");
     return 0;
+}
+
+// ============================================================================
+// Blood Display Helper Tests
+// ============================================================================
+
+void test_blood_display_helpers() {
+    printf("\n=== Layer 4: blood display helpers ===\n");
+
+    GrowthStatInfo info;
+    memset(&info, 0, sizeof(info));
+
+    // No blood
+    TEST_ASSERT(get_blood_count(&info) == 0, "No blood count = 0");
+
+    // Add Baldo blood entry manually for testing
+    info.blood.entries[0].type = BLOOD_BALDO;
+    info.blood.entries[0].bonus.hp_bonus = 20;
+    info.blood.entries[0].bonus.str_bonus = 10;
+    info.blood.entries[0].bonus.skl_bonus = 10;
+    info.blood.entries[0].bonus.lck_bonus = 10;
+    info.blood.count = 1;
+
+    TEST_ASSERT(get_blood_count(&info) == 1, "Blood count = 1 after adding");
+    TEST_ASSERT(get_blood_type_at(&info, 0) == BLOOD_BALDO, "Blood type at 0 = BALDO");
+    TEST_ASSERT(get_blood_bonus_for_stat(&info, 0, STAT_HP) == 20, "HP bonus for Baldo = 20");
+    TEST_ASSERT(get_blood_bonus_for_stat(&info, 0, STAT_STR) == 10, "STR bonus for Baldo = 10");
+    TEST_ASSERT(get_blood_bonus_for_stat(&info, 0, STAT_MAG) == 0, "MAG bonus for Baldo = 0");
+
+    // Add Hezul blood entry
+    info.blood.entries[1].type = BLOOD_HEZUL;
+    info.blood.entries[1].bonus.hp_bonus = 20;
+    info.blood.entries[1].bonus.str_bonus = 30;
+    info.blood.count = 2;
+
+    TEST_ASSERT(get_blood_count(&info) == 2, "Blood count = 2 after adding");
+    TEST_ASSERT(get_blood_type_at(&info, 1) == BLOOD_HEZUL, "Blood type at 1 = HEZUL");
+    TEST_ASSERT(get_blood_bonus_for_stat(&info, 1, STAT_HP) == 20, "HP bonus for Hezul = 20");
+    TEST_ASSERT(get_blood_bonus_for_stat(&info, 1, STAT_STR) == 30, "STR bonus for Hezul = 30");
+
+    // Out-of-bounds access returns safe defaults
+    TEST_ASSERT(get_blood_type_at(&info, 5) == BLOOD_NONE, "Out of bounds returns NONE");
+    TEST_ASSERT(get_blood_bonus_for_stat(&info, 5, STAT_HP) == 0, "Out of bounds bonus = 0");
+}
+
+void test_format_all_stats_columns() {
+    printf("\n=== Layer 4: format_all_stats_columns ===\n");
+
+    GrowthStatInfo growths[STAT_COUNT];
+    StatDisplayColumn cols[STAT_COUNT];
+
+    // Setup mock data for HP stat with blood
+    memset(growths, 0, sizeof(growths));
+    
+    // HP stat: class_base=75, personal=-50, total=25
+    growths[STAT_HP].growth.base = 75;
+    growths[STAT_HP].growth.personal = -50;
+    growths[STAT_HP].growth.total = 25;
+    
+    // Add Baldo blood to HP stat
+    growths[STAT_HP].blood.entries[0].type = BLOOD_BALDO;
+    growths[STAT_HP].blood.entries[0].bonus.hp_bonus = 20;
+    growths[STAT_HP].blood.count = 1;
+
+    format_all_stats_columns(growths, cols);
+
+    TEST_ASSERT(strcmp(cols[STAT_HP].stat_name, "HP") == 0, "Stat name = HP");
+    TEST_ASSERT(cols[STAT_HP].class_base_growth == 75, "Class base growth = 75");
+    TEST_ASSERT(cols[STAT_HP].personal_modifier == -50, "Personal modifier = -50");
+    TEST_ASSERT(cols[STAT_HP].total_gain == 25, "Total gain = 25");
+    // Total growth rate includes blood bonus: 25 + 20 (HP bonus) = 45
+    TEST_ASSERT(cols[STAT_HP].total_growth_rate == 45, "Total growth rate with blood = 45");
+    TEST_ASSERT(cols[STAT_HP].blood_count == 1, "Blood count = 1");
+    TEST_ASSERT(cols[STAT_HP].blood_bonus[0][STAT_HP] == 20, "HP blood bonus = 20");
 }
