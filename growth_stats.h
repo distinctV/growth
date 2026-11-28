@@ -1,293 +1,312 @@
-#ifndef FE4_GROWTH_STATS_H
-#define FE4_GROWTH_STATS_H
+/**
+ * @file growth_stats.h
+ * @brief Public API for unit growth rate extraction, expected value analysis, and display formatting.
+ */
+
+#ifndef GROWTH_STATS_H
+#define GROWTH_STATS_H
 
 #include <stdint.h>
 
+/* ============================================================================
+ * Type Aliases (SNES 32-bit pointer / handle)
+ * ============================================================================ */
+typedef uint8_t  uint8;
+typedef uint16_t uint16;
+typedef uint32_t uint32;
+
+/* ============================================================================
+ * Stat Types
+ * ============================================================================ */
 typedef enum {
-    STAT_HP,
-    STAT_STR,
-    STAT_MAG,
-    STAT_SKL,
-    STAT_SPD,
-    STAT_DEF,
-    STAT_RES,
-    STAT_LCK,
+    STAT_HP   = 0,
+    STAT_STR  = 1,
+    STAT_MAG  = 2,
+    STAT_SKL  = 3,
+    STAT_SPD  = 4,
+    STAT_DEF  = 5,
+    STAT_RES  = 6,
+    STAT_LCK  = 7,
     STAT_COUNT
 } StatType;
 
-/**
- * @brief RNG impact classification enum (forward declared for GrowthStatInfo).
- */
+/* ============================================================================
+ * Blood Types (13 holy bloods + NONE)
+ * ============================================================================ */
 typedef enum {
-    RNG_NEUTRAL,
-    RNG_BLESSED,
-    RNG_CURSED
-} RngImpact;
-
-/**
- * @brief Stat label strings for display.
- */
-extern const char* stat_label(StatType s);
-
-/**
- * @brief Information about a unit's growth rates for a specific stat.
- */
-// ROM class table offsets (per ROM_MAP.md)
-#define CLASS_TABLE_OFFSET 0x038FC5
-#define CLASS_RECORD_SIZE 31
-
-// Unit record sizes by type (per ROM_MAP.md)
-#define TYPE_0_RECORD_SIZE 38   // Playable with fixed stats
-#define TYPE_1_RECORD_SIZE 12   // Playable children (inherited)
-#define TYPE_3_RECORD_SIZE 13   // Class-based units
-#define UNIT_RECORD_MAX_SIZE 40 // Safe upper bound
-
-// Unit record field offsets (Type 0/2, per ROM_MAP.md)
-#define UNIT_TYPE_OFFSET 0      // Record type byte
-#define UNIT_HP_OFFSET 1        // HP stat
-#define UNIT_STR_OFFSET 2       // STR stat
-#define UNIT_MAG_OFFSET 3       // MAG stat
-#define UNIT_SKL_OFFSET 4       // SKL stat
-#define UNIT_SPD_OFFSET 5       // SPD stat
-#define UNIT_DEF_OFFSET 6       // DEF stat
-#define UNIT_RES_OFFSET 7       // RES stat
-#define UNIT_LCK_OFFSET 8       // LCK stat (absolute)
-#define UNIT_CLASS_ID_OFFSET 9  // Class ID
-#define UNIT_LEVEL_OFFSET 10    // Current level
-#define UNIT_GROWTH_HP_OFFSET 20 // HP growth rate
-#define UNIT_GROWTH_STR_OFFSET 21 // STR growth rate
-#define UNIT_GROWTH_MAG_OFFSET 22 // MAG growth rate
-#define UNIT_GROWTH_SKL_OFFSET 23 // SKL growth rate
-#define UNIT_GROWTH_SPD_OFFSET 24 // SPD growth rate
-#define UNIT_GROWTH_DEF_OFFSET 25 // DEF growth rate
-#define UNIT_GROWTH_RES_OFFSET 26 // RES growth rate
-#define UNIT_GROWTH_LCK_OFFSET 27 // LCK growth rate
-#define UNIT_BLOOD_OFFSET 31    // Holy blood (13 × 2-bit slots)
-#define UNIT_RECORD_GROWTH_OFFSET 20   // HP growth base offset in unit record
-#define UNIT_NAME_ID_OFFSET 15  // Name ID (2 bytes)
-
-// --- Type 1 child record offsets (12 bytes inline) ---
-#define TYPE1_CLASS_OFFSET 1      // Class ID at offset +1
-#define TYPE1_LEVEL_OFFSET 2      // Level at offset +2
-#define TYPE1_GENDER_OFFSET 8     // Gender at offset +8 (0=male, 1=female)
-#define TYPE1_HEIR_OFFSET 11      // Heir flag at offset +11 (1=father, 0=mother)
-
-// --- Type 3 class-based record offsets (13 bytes inline) ---
-#define TYPE3_CLASS_OFFSET 5      // Class ID at offset +5
-#define TYPE3_LEVEL_OFFSET 7      // Level at offset +7
-
-// --- Parent handle storage offsets (Type 0/2 data blocks) ---
-#define PARENT_SAME_GENDER_OFFSET 20   // Same-gender parent handle at offset +20
-#define PARENT_SECONDARY_OFFSET 24     // Secondary parent handle at offset +24
-
-// --- Class record field offsets (per ROM_MAP.md) ---
-#define CLASS_HP_BASE_OFFSET 1         // HP base stat at offset +1
-#define CLASS_STAT_BASE_OFFSET 2       // STR/MAG/SKL/SPD/DEF/RES base stats start at offset +2
-#define CLASS_HP_GROWTH_OFFSET 8       // HP growth rate at offset +8
-#define CLASS_STAT_GROWTH_OFFSET 9     // STR/MAG/SKL/SPD/DEF/RES growth rates start at offset +9
-
-/**
- * @brief Holy blood type enumeration.
- */
-typedef enum {
-    BLOOD_NONE = 0,
-    BLOOD_BALDO,   // +20% HP, +10% STR, +10% SKL, +10% LCK
-    BLOOD_ODO,     // +20% HP, +30% SKL
-    BLOOD_HEZUL,   // +20% HP, +30% STR
-    BLOOD_NOBA,    // +20% HP, +10% STR, +10% SPD, +10% DEF
-    BLOOD_DAIN,    // +20% HP, +30% SPD
-    BLOOD_NEIR,    // +20% HP, +30% RES
-    BLOOD_ULIR,    // +20% HP, +30% LCK
-    BLOOD_BLAGI,   // +10% HP, +10% MAG, +10% LCK, +20% RES
-    BLOOD_FALA,    // +20% HP, +30% MAG
-    BLOOD_TORDO,   // +20% HP, +30% MAG
-    BLOOD_HOLSETY, // +20% HP, +30% SPD
-    BLOOD_NARGA,   // +10% HP, +20% MAG
-    BLOOD_LOPUTOUSU // +10% HP, +20% MAG
+    BLOOD_NONE          = 0,
+    BLOOD_BALDO         = 1,
+    BLOOD_ODO           = 2,
+    BLOOD_HEZUL         = 3,
+    BLOOD_NOBA          = 4,
+    BLOOD_DAIN          = 5,
+    BLOOD_NEIR          = 6,
+    BLOOD_ULIR          = 7,
+    BLOOD_BLAGI         = 8,
+    BLOOD_FALA          = 9,
+    BLOOD_TORDO         = 10,
+    BLOOD_HOLSETY       = 11,
+    BLOOD_NARGA         = 12,
+    BLOOD_LOPUTOUSU     = 13,
+    BLOOD_COUNT
 } BloodType;
 
-/**
- * @brief Holy blood bonus for a specific stat.
- */
+/* ============================================================================
+ * RNG Impact (Blessed / Cursed / Neutral)
+ * ============================================================================ */
+typedef enum {
+    RNG_BLESSED = 1,
+    RNG_CURSED  = -1,
+    RNG_NEUTRAL = 0
+} RngImpact;
+
+/* ============================================================================
+ * Blood Bonus Structure (per-stat percentage bonuses)
+ * ============================================================================ */
 typedef struct {
-    int hp_bonus;      // Percentage bonus to HP growth
-    int str_bonus;     // Percentage bonus to STR growth
-    int mag_bonus;     // Percentage bonus to MAG growth
-    int skl_bonus;     // Percentage bonus to SKL growth
-    int spd_bonus;     // Percentage bonus to SPD growth
-    int def_bonus;     // Percentage bonus to DEF growth
-    int lck_bonus;     // Percentage bonus to LCK growth
-    int res_bonus;     // Percentage bonus to RES growth
+    int hp_bonus;
+    int str_bonus;
+    int mag_bonus;
+    int skl_bonus;
+    int spd_bonus;
+    int def_bonus;
+    int lck_bonus;
+    int res_bonus;
 } BloodBonus;
 
-typedef struct {
-    int class_base_growth;       // The base growth rate provided by the current class (from ROM).
-    int personal_modifier;       // The additional growth modifier from personal stats or blood (Total - Class).
-    int total_growth_rate;       // The actual final growth rate used for level-ups (from Unit Record in ROM)
-    
-    // Expected value calculations
-    int current_level;              // Unit's current level for expected calculation
-    int cached_level;               // Cached level for change detection (recalc only on level-up)
-    float expected_gain_per_level;  // Mean gain per level-up (growth_rate / 100)
-    float std_dev_per_level;        // Standard deviation per level-up
-    
-    // RNG impact classification
-    RngImpact impact;               // BLESSED, CURSED, or NEUTRAL
-    
-    // Holy blood information (up to 2 blood types per unit)
-    BloodType blood_types[2];       // Primary and secondary blood types
-    int blood_type_count;           // Number of blood types present (0-2)
-    int blood_bonus_hp[2];          // HP bonus per blood type index
-    int blood_bonus_str[2];         // STR bonus per blood type index
-    int blood_bonus_mag[2];         // MAG bonus per blood type index
-    int blood_bonus_skl[2];         // SKL bonus per blood type index
-    int blood_bonus_spd[2];         // SPD bonus per blood type index
-    int blood_bonus_def[2];         // DEF bonus per blood type index
-    int blood_bonus_lck[2];         // LCK bonus per blood type index
-    int blood_bonus_res[2];         // RES bonus per blood type index
-} GrowthStatInfo;
+/* ============================================================================
+ * Growth Stat Info (per-stat output) - REFACTORED INTO NESTED STRUCTS
+ * ============================================================================ */
 
 typedef struct {
-    float expected_gain;
-    int actual_gain;
+    int base;           /* ROM class base growth rate for this stat */
+    int personal;       /* total - class_base (actual contribution) */
+    int total;          /* Unit's total growth rate from ROM record */
+} StatGrowthData;
+
+typedef struct {
+    float mean;         /* Mean gain per level-up (p = growth/100) */
+    float std_dev;      /* Std dev per level-up sqrt(p*(1-p)) */
+    int   level;        /* Unit's current level */
+} StatExpectation;
+
+typedef struct {
+    BloodType type;
+    BloodBonus bonus;
+} BloodEntry;
+
+typedef struct {
+    BloodEntry entries[2];
+    int count;
+} BloodInfo;
+
+// This is what the user's existing code expects (one per stat)
+typedef struct {
+    StatGrowthData growth;
+    StatExpectation expectation;
+    BloodInfo blood; // Note: In FE4, blood is unit-wide, not stat-specific.
+                     // But for a "stat report", we include it.
+} GrowthStatInfo;
+
+/* ============================================================================
+ * Stat Display Line (formatted output)
+ * ============================================================================ */
+typedef struct {
+    char   text[128];
+    RngImpact impact;
+} StatDisplayLine;
+
+/* ============================================================================
+ * Legacy Estimation Output
+ * ============================================================================ */
+typedef struct {
+    float     expected_gain;
+    int       actual_gain;
     RngImpact impact;
 } StatEstimation;
 
-/**
- * @brief Estimates the RNG impact of a stat change compared to expectation.
- */
-void get_stat_estimation(int growth_rate, int actual_gain, int levels, StatEstimation* out);
+/* ============================================================================
+ * Layer 1: Memory Access Primitives
+ * ============================================================================ */
+uint8  read_u8(const uint8_t* r, uint32_t a);
+uint16 read_u16(const uint8_t* r, uint32_t a);
+uint32 resolve_ram_ptr(const uint8_t* r, uint32_t a);
 
-/**
- * @brief Display format for a single stat line.
- */
-typedef struct {
-    char text[64];           // Formatted string like "HP 12+8=20 gr:75 [B]"
-    RngImpact impact;        // Classification for this stat
-} StatDisplayLine;
+/* ============================================================================
+ * Layer 2: Data Accessors (Unit / Class / ROM)
+ * ============================================================================ */
+uint32 get_unit_data_ptr(const uint8_t* ram, uint32_t handle);
+uint8  get_unit_class_id(const uint8_t* ram, uint32_t data_ptr);
+int    get_unit_level(const uint8_t* ram, uint32_t data_ptr);
+uint32 get_unit_record_ptr(const uint8_t* r, uint32_t h);
+uint32 get_class_record_ptr(uint8_t class_id);
 
-// --- Layer 1: Memory Access (The "Drivers") ---
-/** @brief Reads a single byte from RAM/ROM at address a */
-static inline uint8_t read_u8(const uint8_t* r, uint32_t a) { return r[a]; }
-
-/** @brief Reads a 16-bit little-endian value from the specified address */
-static inline uint16_t read_u16(const uint8_t* r, uint32_t a) { return r[a] | r[a + 1] << 8; }
-
-/** @brief Resolves a 24-bit pointer from SNES RAM (banks $7E and $7F) */
-uint32_t resolve_ram_ptr(const uint8_t* r, uint32_t a);
-
-// --- Layer 2: Data Accessors (The "Data Layer") ---
-/** @brief Gets the unit's data pointer in RAM from its handle */
-uint32_t get_unit_data_ptr(const uint8_t* ram, uint32_t handle);
-
-/** @brief Gets the unit's class ID from RAM data */
-uint8_t get_unit_class_id(const uint8_t* ram, uint32_t data_ptr);
-
-/** @brief Calculates the ROM address of a class record from class_id */
-uint32_t get_class_record_ptr(uint8_t class_id);
-
-/** @brief Reads a base growth rate from the class table in ROM for a specific stat */
 int read_rom_class_growth(const uint8_t* rom, uint32_t class_record_ptr, StatType stat);
-
-/** @brief Gets the unit's record pointer in ROM from its handle */
-uint32_t get_unit_record_ptr(const uint8_t* r, uint32_t h);
-
-/** @brief Reads the total growth rate from a unit's ROM record for a specific stat */
 int read_rom_total_growth(const uint8_t* rom, uint32_t record_ptr, StatType stat);
 
-/** @brief Gets the unit's current level from RAM data */
-int get_unit_level(const uint8_t* ram, uint32_t data_ptr);
+/* Unit type / gender / heir helpers */
+uint8  get_unit_type(const uint8_t* ram, uint32_t handle);
+int    get_unit_gender(const uint8_t* ram, uint32_t data_ptr);
+int    get_child_heir_flag(const uint8_t* ram, uint32_t data_ptr);
 
-// --- Layer 3: Business Logic (The "Engine") ---
-/** @brief Calculates expected stat gain over a number of levels using binomial mean */
-float calculate_expected_gain(int growth_rate, int levels);
-
-/** @brief Calculates standard deviation for binomial distribution over levels */
-float calculate_std_dev(int growth_rate, int levels);
-
-/** @brief Evaluates RNG impact: compares actual gain to expected with sigma threshold */
-RngImpact evaluate_rng_impact(int actual_gain, float expected_gain, float std_dev);
-
-// --- Layer 4: Aggregation (The "Service Layer") ---
-/** @brief Retrieves detailed growth information for a single stat */
-void get_unit_growth_stat(const uint8_t* ram, const uint8_t* rom, int romLen, uint32_t handle, StatType stat, GrowthStatInfo* out);
-
-/** @brief Retrieves growth info for all 7 stats (HP, STR, MAG, SKL, SPD, DEF, LCK) */
-void get_unit_all_growths(const uint8_t* ram, const uint8_t* rom, int romLen, uint32_t handle, GrowthStatInfo* out);
-
-/** @brief Formats a stat line for display: "STAT base+personal=total gr:N [B/C/N]" */
-void format_stat_display_line(StatType stat, const GrowthStatInfo* info, StatDisplayLine* out);
-
-/** @brief Formats all 7 stats into display lines */
-void format_all_stats_display(const GrowthStatInfo* growths, StatDisplayLine* out_lines);
-
-// --- Layer 2/3: Blood Type Helpers ---
-/** @brief Maps a raw byte value to BloodType enum */
+/* Blood type helpers */
 BloodType blood_type_from_byte(uint8_t byte_val);
-
-/** @brief Converts BloodType enum back to raw byte for storage */
-uint8_t blood_type_to_byte(BloodType blood);
-
-/** @brief Returns the human-readable name of a blood type */
-const char* blood_type_name(BloodType blood);
-
-// --- Layer 2/3: Blood Type Detection ---
-/** @brief Detects all blood types present on a unit (up to 2) */
-void get_all_blood_types(const uint8_t* ram, uint32_t data_ptr, GrowthStatInfo* out);
-/** @brief Detects blood types and fills per-stat bonus for the given stat type */
-void get_all_blood_types_for_stat(const uint8_t* ram, uint32_t data_ptr, GrowthStatInfo* out, StatType stat);
-
-// --- Layer 2: Blood Detection Accessors ---
-/** @brief Reads blood type from unit's RAM data block */
+uint8     blood_type_to_byte(BloodType blood);
 BloodType get_unit_blood_type(const uint8_t* ram, uint32_t data_ptr);
 
-// --- Layer 3: Blood Bonus Calculation ---
-/** @brief Returns the blood bonus table entry for a given blood type */
+/* Parent handle accessors (Generation Inheritance) */
+uint32 get_same_gender_parent_handle(const uint8_t* ram, uint32_t data_ptr);
+uint32 get_secondary_parent_handle(const uint8_t* ram, uint32_t data_ptr);
+
+/* ============================================================================
+ * Layer 3: Business Logic / Engine
+ * ============================================================================ */
+float   calculate_expected_gain(int growth_rate, int levels);
+float   calculate_std_dev(int growth_rate, int levels);
+RngImpact evaluate_rng_impact(int actual_gain, float expected_gain, float std_dev);
+
 BloodBonus get_blood_bonus_table(BloodType blood);
+int        calculate_blood_bonus_total(BloodType blood);
+int        calculate_inherited_growth_rate(int same_gender_base_growth,
+                                           int other_gender_base_growth,
+                                           BloodType child_blood);
+BloodType  determine_child_blood_type(BloodType same_gender_parent_blood,
+                                      BloodType other_gender_parent_blood,
+                                      int is_same_gender_child);
 
-/** @brief Calculates total percentage bonus from blood type */
-int calculate_blood_bonus_total(BloodType blood);
+/* Type-specific computation dispatchers */
+void compute_fixed_stats(const uint8_t* ram, const uint8_t* rom, int romLen,
+                         uint32_t handle, StatType stat, GrowthStatInfo* out);
+void compute_inherited_child_stats(const uint8_t* ram, const uint8_t* rom, int romLen,
+                                   uint32_t handle, StatType stat, GrowthStatInfo* out);
+void compute_class_based_stats(const uint8_t* ram, const uint8_t* rom, int romLen,
+                               uint32_t handle, StatType stat, GrowthStatInfo* out);
 
-// --- Layer 2: Parent Data Accessors (Generation Inheritance) ---
-/** @brief Reads parent handle from unit's RAM data block (same-gender parent at offset +20) */
-uint32_t get_same_gender_parent_handle(const uint8_t* ram, uint32_t data_ptr);
+/* ============================================================================
+ * Layer 4: Aggregation / Display Service
+ * ============================================================================ */
+const char* stat_label(StatType s);
+void format_stat_display_line(StatType stat, const GrowthStatInfo* info, StatDisplayLine* out);
+void format_all_stats_display(const GrowthStatInfo* growths, StatDisplayLine* out_lines);
 
-/** @brief Reads secondary parent handle from unit's RAM data block (other-gender parent at offset +24) */
-uint32_t get_secondary_parent_handle(const uint8_t* ram, uint32_t data_ptr);
+/* Column-format for ImGui table rendering (menu integration) */
+typedef struct {
+    char   stat_name[16];
+    int    class_base_growth;
+    int    personal_modifier;
+    int    total_gain;
+    int    total_growth_rate;  /* includes blood bonuses */
+    int    class_growth_rate;
+    int    blood_count;
+    int    blood_bonus[2][STAT_COUNT];  /* per-blood, per-stat bonus */
+} StatDisplayColumn;
+void format_all_stats_columns(const GrowthStatInfo* growths, StatDisplayColumn* out_cols);
 
-// --- Layer 2/3: Blood Type Helpers ---
-/** @brief Maps a raw byte value to BloodType enum */
-BloodType blood_type_from_byte(uint8_t byte_val);
+/* Multi-blood detection */
+void get_all_blood_types(const uint8_t* ram, uint32_t data_ptr, GrowthStatInfo* out);
+void get_all_blood_types_for_stat(const uint8_t* ram, uint32_t data_ptr,
+                                  GrowthStatInfo* out, StatType stat);
 
-/** @brief Converts BloodType enum back to raw byte for storage */
-uint8_t blood_type_to_byte(BloodType blood);
+/* Blood name getter */
+const char* blood_type_name(BloodType blood);
 
-// --- Layer 3: Inheritance Calculation ---
-/** @brief Calculates inherited growth rate per inheritance_rules.md formula */
-int calculate_inherited_growth_rate(int same_gender_base_growth, int other_gender_base_growth, BloodType child_blood);
+/* Blood display helpers — extract flat arrays for table formatting */
+int  get_blood_count(const GrowthStatInfo* info);
+BloodType get_blood_type_at(const GrowthStatInfo* info, int index);
+int   get_blood_bonus_for_stat(const GrowthStatInfo* info, int blood_index, StatType stat);
 
-/** @brief Determines child's blood type based on parent blood and gender rules */
-BloodType determine_child_blood_type(BloodType same_gender_parent_blood, BloodType other_gender_parent_blood, int is_same_gender_child);
+/* Main entry point for a single stat */
+void get_unit_growth_stat(const uint8_t* ram, const uint8_t* rom, int romLen,
+                          uint32_t handle, StatType stat, GrowthStatInfo* out);
 
-// --- Layer 2: Type 1 Child Data Accessors ---
-/** @brief Gets child's gender from RAM data block (offset +8) */
-int get_unit_gender(const uint8_t* ram, uint32_t data_ptr);
+/* All 7 stats at once */
+void get_unit_all_growths(const uint8_t* ram, const uint8_t* rom, int romLen,
+                          uint32_t handle, GrowthStatInfo* out);
 
-/** @brief Gets child's heir flag (1=father blood, 0=mother blood) from RAM data block (offset +11) */
-int get_child_heir_flag(const uint8_t* ram, uint32_t data_ptr);
+/* ============================================================================
+ * Constants & Lookup Tables (Moved from .c for cross-module access)
+ * ============================================================================ */
 
-// --- Layer 4: Type Detection and Dispatch ---
-/** @brief Returns the unit record type byte (0=playable fixed, 1=inherited child, 2=npc/boss, 3=class-based) */
-uint8_t get_unit_type(const uint8_t* ram, uint32_t handle);
+/* ROM class table layout */
+extern const uint32_t CLASS_TABLE_OFFSET;
+extern const int      CLASS_RECORD_SIZE;
 
-// --- Layer 4: Type-specific Growth Computation ---
-/** @brief Computes growth stats for Type 0/2 units with fixed personal stats */
-void compute_fixed_stats(const uint8_t* ram, const uint8_t* rom, int romLen, uint32_t handle, StatType stat, GrowthStatInfo* out);
+/* Class growth offset per stat index (HP at +8, others at +9..+13, LCK at +15) */
+#define CLASS_HP_GROWTH_OFFSET  8
+#define CLASS_STAT_GROWTH_OFFSET 9
+extern const int CLASS_GROWTH_OFFSET[STAT_COUNT];
 
-/** @brief Computes inherited growth stats for Type 1 children from parent data */
-void compute_inherited_child_stats(const uint8_t* ram, const uint8_t* rom, int romLen, uint32_t handle, StatType stat, GrowthStatInfo* out);
+/* Unit ROM record layout */
+extern const int      UNIT_RECORD_GROWTH_OFFSET;
+extern const int      UNIT_RECORD_MAX_SIZE;
 
-/** @brief Computes stats for Type 3 class-based units (generic enemies/bosses) */
-void compute_class_based_stats(const uint8_t* ram, const uint8_t* rom, int romLen, uint32_t handle, StatType stat, GrowthStatInfo* out);
+/* Unit growth offset per stat index (HP at +20, others at +21..+27) */
+extern const int UNIT_GROWTH_OFFSET[STAT_COUNT];
 
-#endif // FE4_GROWTH_STATS_H
+/* Unit RAM data block offsets (Type 0/2 fixed units) */
+extern const int      UNIT_CLASS_ID_OFFSET;
+extern const int      UNIT_LEVEL_OFFSET;
+extern const int      UNIT_BLOOD_OFFSET;
+
+/* Type 1 child inline data offsets */
+extern const int TYPE1_CLASS_OFFSET;
+extern const int TYPE1_LEVEL_OFFSET;
+extern const int TYPE1_GENDER_OFFSET;
+extern const int TYPE1_HEIR_OFFSET;
+
+/* Parent handle offsets in Type 1 data block */
+extern const int PARENT_SAME_GENDER_OFFSET;
+extern const int PARENT_SECONDARY_OFFSET;
+
+/* Type 3 class-based inline data offsets */
+extern const int TYPE3_CLASS_OFFSET;
+extern const int TYPE3_LEVEL_OFFSET;
+
+/* Class record base stat offsets (Type 3) */
+extern const int CLASS_HP_BASE_OFFSET;
+extern const int CLASS_STAT_BASE_OFFSET;
+
+/* SNES RAM bank values */
+extern const uint8_t RAM_BANK_LOW;
+extern const uint8_t RAM_BANK_HIGH;
+
+/* Handle range validation */
+extern const uint32_t UNIT_HANDLE_MIN;
+extern const uint32_t UNIT_HANDLE_MAX;
+
+/* Class ID mask (upper bits are flags) */
+extern const uint8_t CLASS_ID_MASK;
+
+/* Unit type byte values */
+extern const uint8_t UNIT_TYPE_PLAYABLE;
+extern const uint8_t UNIT_TYPE_CHILD;
+extern const uint8_t UNIT_TYPE_NPC_BOSS;
+extern const uint8_t UNIT_TYPE_CLASS_BASED;
+
+/* Stat label lookup table (replaces switch) */
+extern const char* STAT_LABELS[STAT_COUNT];
+
+/* RNG impact string labels */
+extern const char* IMPACT_BLESSED_STR;
+extern const char* IMPACT_CURSED_STR;
+extern const char* IMPACT_NEUTRAL_STR;
+
+/* RNG sigma thresholds */
+extern const float BLESSED_SIGMA_THRESHOLD;
+extern const float CURSED_SIGMA_THRESHOLD;
+
+/* Blood type slot mapping (index 0-12 maps to blood enum) */
+extern const BloodType BLOOD_TYPE_MAP[13];
+
+/* Blood bonus lookup table indexed by BloodType enum */
+extern const BloodBonus BLOOD_BONUS_MAP[BLOOD_COUNT];
+
+/* Blood type name lookup table */
+extern const char* BLOOD_NAME_MAP[BLOOD_COUNT];
+
+/* ============================================================================
+ * Legacy API Compatibility
+ * ============================================================================ */
+void get_stat_estimation(int growth_rate, int actual_gain, int levels, StatEstimation* out);
+
+#endif /* GROWTH_STATS_H */
