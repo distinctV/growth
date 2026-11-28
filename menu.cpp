@@ -463,12 +463,12 @@ static void render_growth_overlay(MenuState* st) {
   }
 
   // Use the new formatting functions from growth_stats.c
-  StatDisplayLine lines[STAT_COUNT];
-  format_all_stats_display(st->growth, lines);
+  StatDisplayColumn cols[STAT_COUNT];
+  format_all_stats_columns(st->growth, cols);
 
   // Determine column count: Stat + Class + FromXP + Total + TotalGrowthRate + ClassGrowthRate + Blood(s)
-  int has_blood = (st->growth[0].blood_type_count > 0);
-  int num_cols = 6 + has_blood * st->growth[0].blood_type_count;
+  int has_blood = (cols[0].blood_count > 0);
+  int num_cols = 6 + has_blood * cols[0].blood_count;
   
   if(ImGui::BeginTable("growth_table", num_cols, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) {
     ImGui::TableSetupColumn("Stat");
@@ -478,9 +478,9 @@ static void render_growth_overlay(MenuState* st) {
     ImGui::TableSetupColumn("Total Growth Rate");
     ImGui::TableSetupColumn("Class Growth Rate");
     if (has_blood) {
-      for (int b = 0; b < st->growth[0].blood_type_count; b++) {
+      for (int b = 0; b < cols[0].blood_count; b++) {
         char colName[32];
-        snprintf(colName, sizeof colName, "%s / Bonus", blood_type_name(st->growth[0].blood_types[b]));
+        snprintf(colName, sizeof colName, "%s / Bonus", blood_type_name(get_blood_type_at(&st->growth[0], b)));
         ImGui::TableSetupColumn(colName);
       }
     }
@@ -504,12 +504,12 @@ static void render_growth_overlay(MenuState* st) {
       
       // Column 2: Base growth (class base)
       char baseStr[16];
-      snprintf(baseStr, sizeof baseStr, "%d", st->growth[i].class_base_growth);
+      snprintf(baseStr, sizeof baseStr, "%d", cols[i].class_base_growth);
       ImGui::TableNextColumn(); ImGui::TextColored(color, baseStr);
 
       // Column 3: Personal modifier (total - class base)
       char persStr[16];
-      snprintf(persStr, sizeof persStr, "%d", st->growth[i].personal_modifier);
+      snprintf(persStr, sizeof persStr, "%d", cols[i].personal_modifier);
       ImGui::TableNextColumn(); ImGui::TextColored(color, persStr);
 
       // Column 4: Total stat gain (Base + Personal) + impact indicator
@@ -520,25 +520,14 @@ static void render_growth_overlay(MenuState* st) {
         case RNG_CURSED:  impactChar = " [C]"; break;
         default:          impactChar = " [N]"; break;
       }
-      int total_gain = st->growth[i].class_base_growth + st->growth[i].personal_modifier;
+      int total_gain = cols[i].class_base_growth + cols[i].personal_modifier;
       snprintf(totalStr, sizeof totalStr, "%d%s", total_gain, impactChar);
       ImGui::TableNextColumn(); ImGui::TextColored(color, totalStr);
 
       // Column 5: Total Growth Rate (unit's recorded rate + blood bonuses for this stat)
-      int total_gr = st->growth[i].total_growth_rate;
-      for (int b = 0; b < st->growth[i].blood_type_count; b++) {
-        int bonus = 0;
-        switch (i) {
-          case STAT_HP:   bonus = st->growth[i].blood_bonus_hp[b]; break;
-          case STAT_STR:  bonus = st->growth[i].blood_bonus_str[b]; break;
-          case STAT_MAG:  bonus = st->growth[i].blood_bonus_mag[b]; break;
-          case STAT_SKL:  bonus = st->growth[i].blood_bonus_skl[b]; break;
-          case STAT_SPD:  bonus = st->growth[i].blood_bonus_spd[b]; break;
-          case STAT_DEF:  bonus = st->growth[i].blood_bonus_def[b]; break;
-          case STAT_LCK:  bonus = st->growth[i].blood_bonus_lck[b]; break;
-          default: bonus = 0; break;
-        }
-        total_gr += bonus;
+      int total_gr = cols[i].total_growth_rate;
+      for (int b = 0; b < cols[i].blood_count; b++) {
+        total_gr += get_blood_bonus_for_stat(&st->growth[i], b, (StatType)i);
       }
       char tgrStr[32];
       snprintf(tgrStr, sizeof tgrStr, "%d%%", total_gr);
@@ -546,27 +535,16 @@ static void render_growth_overlay(MenuState* st) {
 
       // Column 6: Class Growth Rate (class base growth from ROM)
       char cgrStr[32];
-      snprintf(cgrStr, sizeof cgrStr, "%d%%", st->growth[i].class_base_growth);
+      snprintf(cgrStr, sizeof cgrStr, "%d%%", cols[i].class_growth_rate);
       ImGui::TableNextColumn(); ImGui::TextColored(color, cgrStr);
 
       // Blood columns (only if blood exists)
       if (has_blood) {
-        for (int b = 0; b < st->growth[i].blood_type_count; b++) {
-          int stat_idx = i;
-          int bonus = 0;
-          switch (stat_idx) {
-            case STAT_HP:   bonus = st->growth[i].blood_bonus_hp[b]; break;
-            case STAT_STR:  bonus = st->growth[i].blood_bonus_str[b]; break;
-            case STAT_MAG:  bonus = st->growth[i].blood_bonus_mag[b]; break;
-            case STAT_SKL:  bonus = st->growth[i].blood_bonus_skl[b]; break;
-            case STAT_SPD:  bonus = st->growth[i].blood_bonus_spd[b]; break;
-            case STAT_DEF:  bonus = st->growth[i].blood_bonus_def[b]; break;
-            case STAT_LCK:  bonus = st->growth[i].blood_bonus_lck[b]; break;
-            default: bonus = 0; break;
-          }
+        for (int b = 0; b < cols[i].blood_count; b++) {
+          int bonus = get_blood_bonus_for_stat(&st->growth[i], b, (StatType)i);
           char bloodStr[64];
           snprintf(bloodStr, sizeof bloodStr, "%s (+%d%%)", 
-                   blood_type_name(st->growth[i].blood_types[b]), bonus);
+                   blood_type_name(get_blood_type_at(&st->growth[i], b)), bonus);
           ImGui::TableNextColumn(); ImGui::TextColored(color, bloodStr);
         }
       }
